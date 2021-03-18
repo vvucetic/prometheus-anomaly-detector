@@ -60,5 +60,4 @@ class Configuration:
     _LOGGER.info("Model retraining interval: %s minutes", retraining_interval_minutes)
 
     # https://facebook.github.io/prophet/docs/trend_changepoints.html#adjusting-trend-flexibility
-    if os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE"):
-        changepoint_prior_scale = Decimal(os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE", "0.05"))
+    changepoint_prior_scale = Decimal(os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE", "0.05"))

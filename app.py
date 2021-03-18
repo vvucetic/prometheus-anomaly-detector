@@ -129,17 +129,6 @@ def refresh_unique_metrics():
                     changepoint_prior_scale=Configuration.changepoint_prior_scale
                 )
             )
-
-    # for predictor in predictor_list:
-    #     unique_metric = predictor.metric
-    #     label_list = list(unique_metric.label_config.keys())
-    #     label_list.append("value_type")
-    #     if unique_metric.metric_name not in gauge_dict:
-    #         gauge_dict[unique_metric.metric_name] = Gauge(
-    #             unique_metric.metric_name + "_" + predictor.model_name,
-    #             predictor.model_description,
-    #             label_list,
-    #         )
     return predictor_list
 
 

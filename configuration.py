@@ -1,6 +1,7 @@
 """docstring for installed packages."""
 import os
 import logging
+from decimal import Decimal
 from prometheus_api_client.utils import parse_datetime, parse_timedelta
 
 if os.getenv("FLT_DEBUG_MODE", "False") == "True":
@@ -57,3 +58,7 @@ class Configuration:
         "Metric data rolling training window size: %s", rolling_training_window_size
     )
     _LOGGER.info("Model retraining interval: %s minutes", retraining_interval_minutes)
+
+    # https://facebook.github.io/prophet/docs/trend_changepoints.html#adjusting-trend-flexibility
+    if os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE"):
+        changepoint_prior_scale = Decimal(os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE", "0.05"))

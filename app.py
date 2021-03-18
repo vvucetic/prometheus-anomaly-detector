@@ -18,9 +18,8 @@ _LOGGER = logging.getLogger(__name__)
 
 METRICS_LIST = Configuration.metrics_list
 
-# list of ModelPredictor Objects shared between processes
-PREDICTOR_MODEL_LIST = list()
-
+# list of ModelPredictor and Gauge Objects shared between processes
+MODEL_LIST = list()
 
 pc = PrometheusConnect(
     url=Configuration.prometheus_url,
@@ -28,55 +27,51 @@ pc = PrometheusConnect(
     disable_ssl=True,
 )
 
-for metric in METRICS_LIST:
-    # Initialize a predictor for all metrics first
-    metric_init = pc.get_current_metric_value(metric_name=metric)
-
-    for unique_metric in metric_init:
-        PREDICTOR_MODEL_LIST.append(
-            model.MetricPredictor(
-                unique_metric,
-                rolling_data_window_size=Configuration.rolling_training_window_size,
-            )
-        )
-
-# A gauge set for the predicted values
-GAUGE_DICT = dict()
-for predictor in PREDICTOR_MODEL_LIST:
-    unique_metric = predictor.metric
-    label_list = list(unique_metric.label_config.keys())
-    label_list.append("value_type")
-    if unique_metric.metric_name not in GAUGE_DICT:
-        GAUGE_DICT[unique_metric.metric_name] = Gauge(
-            unique_metric.metric_name + "_" + predictor.model_name,
-            predictor.model_description,
-            label_list,
-        )
-
-
 class MainHandler(tornado.web.RequestHandler):
     """Tornado web request handler."""
 
-    def initialize(self, data_queue):
+    def initialize(self, data_queue, gauge_dict):
         """Check if new predicted values are available in the queue before the get request."""
         try:
             model_list = data_queue.get_nowait()
             self.settings["model_list"] = model_list
+            self.settings["gauge_dict"] = gauge_dict
+
+            # add new gauges
+            fresh_metrics = set([predictor.metric.metric_name for predictor in model_list])
+            for predictor in model_list:
+                unique_metric = predictor.metric
+                if unique_metric.metric_name not in gauge_dict:
+                    label_list = list(unique_metric.label_config.keys())
+                    label_list.append("value_type")
+                    gauge_dict[unique_metric.metric_name] = Gauge(
+                        unique_metric.metric_name + "_" + predictor.model_name,
+                        predictor.model_description,
+                        label_list,
+                    )
+            # remove old gauges
+            for garbage_gauge in filter(lambda x: x not in fresh_metrics, gauge_dict.keys()):
+                del gauge_dict[garbage_gauge]
         except EmptyQueueException:
             pass
 
     async def get(self):
         """Fetch and publish metric values asynchronously."""
         # update metric value on every request and publish the metric
+        gauge_dict = self.settings["gauge_dict"]
         for predictor_model in self.settings["model_list"]:
             # get the current metric value so that it can be compared with the
             # predicted values
-            current_metric_value = Metric(
-                pc.get_current_metric_value(
-                    metric_name=predictor_model.metric.metric_name,
-                    label_config=predictor_model.metric.label_config,
-                )[0]
-            )
+            try:
+                current_metric_value = Metric(
+                    pc.get_current_metric_value(
+                        metric_name=predictor_model.metric.metric_name,
+                        label_config=predictor_model.metric.label_config,
+                    )[0]
+                )
+            except IndexError:
+                # metric no longer available, skip it
+                continue
 
             metric_name = predictor_model.metric.metric_name
             prediction = predictor_model.predict_value(datetime.now())
@@ -84,7 +79,7 @@ class MainHandler(tornado.web.RequestHandler):
             # Check for all the columns available in the prediction
             # and publish the values for each of them
             for column_name in list(prediction.columns):
-                GAUGE_DICT[metric_name].labels(
+                gauge_dict[metric_name].labels(
                     **predictor_model.metric.label_config, value_type=column_name
                 ).set(prediction[column_name][0])
 
@@ -99,7 +94,7 @@ class MainHandler(tornado.web.RequestHandler):
 
             # create a new time series that has value_type=anomaly
             # this value is 1 if an anomaly is found 0 if not
-            GAUGE_DICT[metric_name].labels(
+            gauge_dict[metric_name].labels(
                 **predictor_model.metric.label_config, value_type="anomaly"
             ).set(anomaly)
 
@@ -110,17 +105,52 @@ class MainHandler(tornado.web.RequestHandler):
 def make_app(data_queue):
     """Initialize the tornado web app."""
     _LOGGER.info("Initializing Tornado Web App")
+    gauge_dict = dict()
     return tornado.web.Application(
         [
-            (r"/metrics", MainHandler, dict(data_queue=data_queue)),
-            (r"/", MainHandler, dict(data_queue=data_queue)),
+            (r"/metrics", MainHandler, dict(data_queue=data_queue, gauge_dict=gauge_dict)),
+            (r"/", MainHandler, dict(data_queue=data_queue, gauge_dict=gauge_dict)),
         ]
     )
 
 
+def refresh_unique_metrics():
+    predictor_list = list()
+    gauge_dict = dict()
+    for metric in METRICS_LIST:
+        # Initialize a predictor for all metrics first
+        metric_init = pc.get_current_metric_value(metric_name=metric)
+
+        for unique_metric in metric_init:
+            predictor_list.append(
+                model.MetricPredictor(
+                    unique_metric,
+                    rolling_data_window_size=Configuration.rolling_training_window_size,
+                    changepoint_prior_scale=Configuration.changepoint_prior_scale
+                )
+            )
+
+    # for predictor in predictor_list:
+    #     unique_metric = predictor.metric
+    #     label_list = list(unique_metric.label_config.keys())
+    #     label_list.append("value_type")
+    #     if unique_metric.metric_name not in gauge_dict:
+    #         gauge_dict[unique_metric.metric_name] = Gauge(
+    #             unique_metric.metric_name + "_" + predictor.model_name,
+    #             predictor.model_description,
+    #             label_list,
+    #         )
+    return predictor_list
+
+
 def train_model(initial_run=False, data_queue=None):
     """Train the machine learning model."""
-    for predictor_model in PREDICTOR_MODEL_LIST:
+
+    # Refresh metrics list
+    _LOGGER.info("Refreshing metrics list.")
+    predictor_list = refresh_unique_metrics()
+    
+    for predictor_model in predictor_list:
         metric_to_predict = predictor_model.metric
         data_start_time = datetime.now() - Configuration.metric_chunk_size
         if initial_run:
@@ -148,18 +178,18 @@ def train_model(initial_run=False, data_queue=None):
             metric_to_predict.label_config,
         )
 
-    data_queue.put(PREDICTOR_MODEL_LIST)
+    data_queue.put(predictor_list)
 
 
 if __name__ == "__main__":
     # Queue to share data between the tornado server and the model training
-    predicted_model_queue = Queue()
+    model_queue = Queue()
 
     # Initial run to generate metrics, before they are exposed
-    train_model(initial_run=True, data_queue=predicted_model_queue)
+    train_model(initial_run=True, data_queue=model_queue)
 
     # Set up the tornado web app
-    app = make_app(predicted_model_queue)
+    app = make_app(model_queue)
     app.listen(8080)
     server_process = Process(target=tornado.ioloop.IOLoop.instance().start)
     # Start up the server to expose the metrics.
@@ -167,7 +197,7 @@ if __name__ == "__main__":
 
     # Schedule the model training
     schedule.every(Configuration.retraining_interval_minutes).minutes.do(
-        train_model, initial_run=False, data_queue=predicted_model_queue
+        train_model, initial_run=False, data_queue=model_queue
     )
     _LOGGER.info(
         "Will retrain model every %s minutes", Configuration.retraining_interval_minutes

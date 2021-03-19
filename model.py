@@ -18,10 +18,13 @@ class MetricPredictor:
     predicted_df = None
     metric = None
 
-    def __init__(self, metric, rolling_data_window_size="10d", changepoint_prior_scale=0.05):
+    def __init__(self, metric, rolling_data_window_size="10d", changepoint_prior_scale=0.05,
+                 cap=None, floor=None):
         """Initialize the Metric object."""
         self.metric = Metric(metric, rolling_data_window_size)
         self.changepoint_prior_scale = changepoint_prior_scale
+        self.floor = floor
+        self.cap = cap
 
     def train(self, metric_data=None, prediction_duration=15):
         """Train the Prophet model and store the predictions in predicted_df."""
@@ -52,6 +55,10 @@ class MetricPredictor:
         )
         forecast = self.model.predict(future)
         forecast["timestamp"] = forecast["ds"]
+        if self.floor:
+            forecast["floor"] = self.floor
+        if self.cap:
+            forecast["cap"] = self.cap
         forecast = forecast[["timestamp", "yhat", "yhat_lower", "yhat_upper"]]
         forecast = forecast.set_index("timestamp")
         self.predicted_df = forecast

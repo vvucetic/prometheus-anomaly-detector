@@ -126,7 +126,9 @@ def refresh_unique_metrics():
                 model.MetricPredictor(
                     unique_metric,
                     rolling_data_window_size=Configuration.rolling_training_window_size,
-                    changepoint_prior_scale=Configuration.changepoint_prior_scale
+                    changepoint_prior_scale=Configuration.changepoint_prior_scale,
+                    cap=Configuration.fbp_cap,
+                    floor=Configuration.fbp_floor
                 )
             )
     return predictor_list

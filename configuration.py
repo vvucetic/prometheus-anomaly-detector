@@ -61,3 +61,6 @@ class Configuration:
 
     # https://facebook.github.io/prophet/docs/trend_changepoints.html#adjusting-trend-flexibility
     changepoint_prior_scale = Decimal(os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE", "0.05"))
+
+    fbp_floor = os.getenv("FBP_FLOOR")
+    fbp_cap = os.getenv("FBP_CAP")

@@ -63,7 +63,7 @@ class Configuration:
     changepoint_prior_scale = Decimal(os.getenv("FBP_CHANGEPOINT_PRIOR_SCALE", "0.05"))
 
     fbp_floor = os.getenv("FBP_FLOOR")
-    fbp_floor = Decimal(fbp_floor) if fbp_floor
+    fbp_floor = Decimal(fbp_floor) if fbp_floor else None
     
     fbp_cap = os.getenv("FBP_CAP")
-    fbp_cap = Decimal(fbp_cap) if fbp_cap
+    fbp_cap = Decimal(fbp_cap) if fbp_cap else None
